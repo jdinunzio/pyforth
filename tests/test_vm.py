@@ -9,11 +9,11 @@
 # it under the terms of the GNU General Public License.
 #
 ##############################################################################
-
+import sys
 from cStringIO import StringIO
 
 from nose import with_setup
-from pyforth import Forth, add_word
+from pyforth import Forth
 
 
 forth = None
@@ -21,84 +21,100 @@ forth = None
 # ==============================================================================
 #    Support
 # ==============================================================================
-def init(fin='', fout=''):
+def init(fin=sys.stdin, fout=sys.stdout):
     '''init a forth machine'''
     global forth
-    if fin or fout:
-        forth = Forth(run=False, fin=fin, fout=fout)
-    else:
-        forth = Forth(run=False)
-
-def def_init(word, stack=[]):
-    '''Deinfe the init word'''
-    add_word(forth, 'init', word)
-    forth.pc = ['init', 0]
-    forth.stack = stack
-    forth._run()
+    forth = Forth(run=False, fin=fin, fout=fout)
 
 def assert_stack(stack):
     '''The forth stack must be equal to stack'''
     assert forth.stack == stack, 'result: %s || wait: %s' % (forth.stack, stack)
 
-def check_init(def_, ini_stack, end_stack, fin=None, fout=None):
-    '''Initialize forth and check_def'''
-    init(fin=fin, fout=fout)
-    check_def(def_, ini_stack, end_stack)
-
-def check_def(def_, ini_stack, end_stack):
-    '''
-    Define and execute the init word and check that the stack end as assumed
-    '''
-    def_init(def_, ini_stack)
+def check_code(code, ini_stack, end_stack):
+    '''Executing code with ini_stack must end with end_stack'''
+    forth.compile_word('init', code)
+    forth.stack = ini_stack
+    forth._run()
     assert_stack(end_stack)
 
 
 # ==============================================================================
 #    Tests
 # ==============================================================================
-
 @with_setup(init)
 def test_load_dct():
     '''_load_dct'''
     for word in 'dup + /mod'.split():
         assert word in forth.dct, forth.dct
 
+@with_setup(init)
 def test_dup():
     '''dup'''
-    check_init('dup end', [2], [2, 2])
+    check_code('dup end', [2], [2, 2])
 
+@with_setup(init)
 def test_lit():
     '''lit'''
-    check_init('lit 3 end', [], [3])
+    check_code('lit 3 end', [], [3])
 
+@with_setup(init)
 def test_branch():
     '''branch'''
-    check_init('branch 1 drop end', [4], [4])
+    check_code('branch 1 drop end', [4], [4])
 
+@with_setup(init)
 def test_zbranch():
     '''0branch'''
-    check_init('lit 1 + dup lit 3 = 0branch -9 end', [1], [3])
+    check_code('lit 1 + dup lit 3 = 0branch -9 end', [1], [3])
+
+# I/O
 
 def test_key():
     '''key'''
     fin = StringIO('abc')
-    check_init('key key key end', [], ['a', 'b', 'c'], fin=fin)
+    init(fin=fin)
+    check_code('key key key end', [], ['a', 'b', 'c'])
 
 def test_word():
     '''word'''
     fin = StringIO(' hello world ')
-    check_init('word word end', [], ['hello', 'world'], fin=fin)
+    init(fin=fin)
+    check_code('word word end', [], ['hello', 'world'])
 
 def test_emit():
     '''emit'''
     fout = StringIO()
-    check_init('lit a emit end', [], [], fout=fout)
+    init(fout=fout)
+    check_code('lit a emit end', [], [])
     assert fout.getvalue() == 'a', fout.getvalue()
 
-def test_fetch_n_store():
-    '''Test fetch and store'''
+# Dictionary words
+
+@with_setup(init)
+def test_store():
+    '''store'''
     assert 'my' not in forth.dct, "'my' defined"
-    check_init('lit 5 lit my ! end', [], [])
+    check_code('lit 5 lit my ! end', [], [])
     assert 'my' in forth.dct, "'my' not defined"
-    check_def('lit my @ end', [], [5])
+    assert forth.dct['my'] == 5, forth.dct['my'] 
+
+@with_setup(init)
+def test_create():
+    '''create, tick and comma'''
+    assert 'blah' not in forth.dct
+    check_code('create ` end , end', ['blah'], [])
+    assert 'blah' in forth.dct
+
+@with_setup(init)
+def test_immediate():
+    '''immediate'''
+    check_code('create immediate end', ['foo'], [])
+    word = forth.dct['foo']
+    assert word.imm == True
+
+@with_setup(init)
+def test_exit():
+    '''exit'''
+    forth.compile_word('double', 'lit 2 * exit')
+    check_code('lit 3 double lit 1 + end', [], [7])
 

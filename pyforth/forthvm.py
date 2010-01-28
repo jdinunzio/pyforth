@@ -10,85 +10,186 @@
 #
 ##############################################################################
 import sys
+import inspect
 
-def code(name=''):
-    def dec(fn, name=name):
+
+def word_(name='', imm=False):
+    '''Word decorator for functions'''
+    def wr(fn, name=name, imm=imm):
         if not name:
-            name = getattr(fn, '__name__')
-        fn.name = name
-        fn.code = True
-        return fn
-    return dec
+            name = fn.__name__
+        word = Word(name, fn, imm)
+        return word
+    return wr
+
+class Word:
+    '''A Forth Word'''
+    def __init__(self, name, code, imm=False):
+        self.name = name
+        self.code = code
+        self.imm = imm
+
+    def is_instruction(self):
+        '''True is self.code is executable'''
+        return inspect.isroutine(self.code)
+
+    def get(self, i):
+        '''Return the i-th word of this word'''
+        return self.code[i]
+
+    def __repr__(self):
+        return '%s' % self.name
+        #return 'Word(%s, %s, %s)' % (self.name, self.code, self.imm)
+
+
+class PC:
+    '''The Program Counter'''
+    def __init__(self, word, idx=0):
+        self.word = word
+        self.idx = idx
+
+    def next(self):
+        '''Returns the word pointed by the PC and increment it'''
+        v = self.this()
+        self.inc()
+        return v
+
+    def this(self):
+        '''Returns the word pointed by the PC'''
+        return self.word.get(self.idx)
+
+    def inc(self, x=1):
+        '''Increments the PC'''
+        self.idx = self.idx + x
+
+    def __repr__(self):
+        return 'PC(%s, %s)' % (self.word.name, self.idx)
+
+
 
 class Forth:
-
-    def __init__(self, run=True, fin=sys.stdin, fout=sys.stdout):
+    '''Forth Virtual Machine'''
+    def __init__(self, run=True, words = [], debug=False, fin=sys.stdin, fout=sys.stdout):
         self.stack = []
         self.rstack = []
-        self.pc = ['init', 0]
         self.dct = {}
         self.fin = fin
         self.fout = fout
+        self.debug = debug
+        self.debugger = None
+        self.last_word = None
 
-        self._load_dct()
+        self._init_words()
+        self._load_words(words)
         if run:
             self._run()
 
-    # Micro-instructions
+    # Utility functions
+    def _debug(self):
+        if not self.debug:
+            return
 
-    def debug(self):
-        print 'rs: ', self.rstack
-        print 'pc: ', self.pc
-        print 'wd: ', self.dct[self.pc[0]]
-        print '    ', self.stack
+        if self.debugger:
+            self.debugger(self)
+            return
+
+        print 'word:    ', self.pc.word.name
+        print 'rs - pc: ', self.rstack, self.pc
+        print '         ', self.pc.word.code
+        print 'cur i:   ', self.pc.this()
+        print 'stack:   ', self.stack
+        print 'interpret', self.dct.get('forth_interpret', False)
         print
 
-    def _run(self):
+    def _str_to_bool(self, ws):
+        'Returns a boolean given a string or RuntimeError'
+        ws = ws.lower()
+        if ws == 'true': 
+            return True
+        elif ws == 'false':
+            return false
+        else:
+            raise RuntimeError
+
+    def _traduce(self, ws):
+        'Return an int, float, bool, word or string given an string'
+        for fn in [self.dct.__getitem__, int, float, self._str_to_bool, str]:
+            try:
+                r = fn(ws)
+                return r
+            except:
+                pass
+
+    def compile_word(self, name, def_, imm=False):
+        '''
+        Create and register a word.
+
+        This is an utility function for test purposes.
+        If a word is not in the dictionary is treated as a string.
+        '''
+        wns = def_.split()
+        parts = []
+        for wn in wns:
+            part = self._traduce(wn)
+            parts.append(part)
+        word = Word(name, parts, imm)
+        self._add_word(word)
+        return word
+
+    def _bool(self, b):
+        '''Convert boolean to forth boolean'''
+        return b
+        if b == True:
+            return -1
+        else:
+            return 0
+        
+    # Execution
+
+    def _run(self, word=None):
         '''Start running the virtual machine'''
+        if not word:
+            word = self.dct['init']
+
+        if word.is_instruction():
+            self._exec_instruction(word)
+            return
+
+        self.pc = PC(word)
         while True:
-            self.debug()
-            word = self._get_pc_word()
-            if word == 'end':
+            word = self._next()
+            if word == end:
                 return
             self._exec(word)
+            self._debug()
 
     def _exec(self, word):
         '''Exec a word'''
-        if self._is_code(word):
-            self._exec_code(word)
+        if word.is_instruction():
+            self._exec_instruction(word)
         else:
-            self._exec_def(word)
+            self._exec_word(word)
 
-    def _exec_code(self, word):
-        '''Exec a codeword'''
-        wd = self.dct[word]
-        wd()
+    def _exec_instruction(self, word):
+        '''Exec an instuction'''
+        word.code(self)
 
-    def _exec_def(self, word):
-        '''Exec a defword'''
+    def _exec_word(self, word):
+        '''Exec a word'''
         self._rpush(self.pc)
-        self.pc = [word, 0]
+        self.pc = PC(word)
 
-    def _is_code(self, word):
-        '''Is the word a codeword?'''
-        wd = self.dct[word]
-        return getattr(wd, 'code', False)
-
-    def _get_pc_word(self):
-        '''Get the word referenced by the pc'''
-        curword, idx = self.pc
-        word = self._get_word(curword, idx)
-        self._inc_pc()
-        return word
-
-    def _get_word(self, word, idx):
-        '''Given a defword, returns its i-th word'''
-        return self.dct[word][idx]
+    # PC
 
     def _inc_pc(self, i=1):
         '''Increment the program counter'''
-        idx = self.pc[1]
-        self.pc[1] = idx + i
+        self.pc.inc(i)
+
+    def _next(self):
+        '''Get the word referenced by the pc'''
+        return self.pc.next()
+
+    # Stack
 
     def _push(self, v):
         self.stack.append(v)
@@ -102,310 +203,407 @@ class Forth:
     def _rpop(self):
         return self.rstack.pop()
 
-    def _load_dct(self):
-        '''Load the dictionary with the codewords'''
-        for name in dir(self):
-            word = getattr(self, name)
-            if getattr(word, 'code', False):
-                name = getattr(word, 'name')
-                self._add_word(name, word)
+    # Dictionary 
 
-    def _add_word(self, name, word):
-        self.dct[name] = word
+    def _init_words(self):
+        '''Load the dictionary with the words defined in this module'''
+        me = sys.modules[__name__]
+        words = self._get_words(me)
+        self._load_words(words)
 
+    def _get_words(self, module):
+        '''Get the words defined in a module'''
+        words = []
+        for name in dir(module):
+            word = getattr(module, name)
+            if isinstance(word, Word):
+                words.append(word)
+        return words
 
-    # Instructions
+    def _load_words(self, words):
+        '''Load the dictionary with words'''
+        for word in words:
+            self._add_word(word)
 
-    # Stack instructions
-    @code()
-    def dup(self):
-        v = self.stack[-1]
-        self._push(v)
-
-    @code()
-    def drop(self):
-        self._pop()
-
-    @code()
-    def swap(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(b)
-        self._push(a)
-
-    @code()
-    def over(self):
-        v = self.stack[-2]
-        self._push(v)
-
-    @code()
-    def rot(self):
-        c = self._pop()
-        b = self._pop()
-        a = self._pop()
-        self._push(b)
-        self._push(c)
-        self._push(a)
-
-    @code('rot-')
-    def rot(self):
-        c = self._pop()
-        b = self._pop()
-        a = self._pop()
-        self._push(b)
-        self._push(c)
-        self._push(a)
-
-    @code()
-    def depth(self):
-        d = len(self.stack)
-        self._push(d)
-
-    @code()
-    def pick(self):
-        i = self._pop()
-        v = self.stack[-1 - i]
-        self._push(v)
-
-    # Arithmetic
-    @code('+')
-    def add(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a+b)
-
-    @code('-')
-    def sub(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a-b)
-
-    @code('*')
-    def mul(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a*b)
-
-    @code('/')
-    def x(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a/b)
-
-    @code('/mod')
-    def divmod(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a/b)
-        self._push(a%b)
-
-    # Bit Operation
-    @code('&')
-    def b_and(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a&b)
-
-    @code('|')
-    def b_or(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a|b)
-
-    @code('^')
-    def b_xor(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a^b)
-
-    @code('~')
-    def neg(self):
-        a = self._pop()
-        self._push(~a)
+    def _add_word(self, word):
+        '''Add a word to the dictionary'''
+        self.dct[word.name] = word
+        self.last_word = word
 
 
-    @code('<<')
-    def shl(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a<<b)
+# Instructions
 
-    @code('>>')
-    def shr(self):
-        b = self._pop()
-        a = self._pop()
-        self._push(a>>b)
+# Stack instructions
+@word_()
+def dup(forth):
+    v = forth.stack[-1]
+    forth._push(v)
 
-    # Logic
-    def __bool(self, v):
-        if v:
-            return -1
-        else:
-            return 0
+@word_()
+def drop(forth):
+    forth._pop()
 
-    @code('and')
-    def and_(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a and b)
-        self._push(v)
+@word_()
+def swap(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(b)
+    forth._push(a)
 
-    @code('or')
-    def or_(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a or b)
-        self._push(v)
+@word_()
+def over(forth):
+    v = forth.stack[-2]
+    forth._push(v)
 
-    @code('not')
-    def not_(self):
-        a = self._pop()
-        v = self.__bool(not a)
-        self._push(v)
+@word_()
+def rot(forth):
+    c = forth._pop()
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(b)
+    forth._push(c)
+    forth._push(a)
 
-    # Comparison 
+@word_('rot-')
+def rot(forth):
+    c = forth._pop()
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(b)
+    forth._push(c)
+    forth._push(a)
 
-    @code('<=')
-    def le(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a <= b)
-        self._push(v)
+@word_()
+def depth(forth):
+    d = len(forth.stack)
+    forth._push(d)
 
-    @code('<')
-    def lt(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a < b)
-        self._push(v)
+@word_()
+def pick(forth):
+    i = forth._pop()
+    v = forth.stack[-1 - i]
+    forth._push(v)
 
-    @code('>=')
-    def ge(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a >= b)
-        self._push(v)
+# Arithmetic
+@word_('+')
+def add(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a+b)
 
-    @code('>')
-    def gt(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a > b)
-        self._push(v)
+@word_('-')
+def sub(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a-b)
 
-    @code('=')
-    def eq(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a == b)
-        self._push(v)
+@word_('*')
+def mul(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a*b)
 
-    @code('<>')
-    def ne(self):
-        b = self._pop()
-        a = self._pop()
-        v = self.__bool(a != b)
-        self._push(v)
+@word_('/')
+def x(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a/b)
 
-    # Branch
+@word_('/mod')
+def divmod(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a/b)
+    forth._push(a%b)
 
-    @code()
-    def branch(self):
-        v = self._get_pc_word()
-        self._inc_pc(v)
+# Bit Operation
+@word_('&')
+def b_and(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a&b)
 
-    @code('0branch')
-    def zbranch(self):
-        c = self._pop()
-        v = self._get_pc_word()
-        if not c:
-            self._inc_pc(v)
+@word_('|')
+def b_or(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a|b)
 
-    #
-    @code()
-    def lit(self):
-        a = self._get_pc_word()
-        self._push(a)
+@word_('^')
+def b_xor(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a^b)
 
-    @code('!')
-    def store(self):
-        k = self._pop()
-        v = self._pop()
-        self.dct[k] = v
+@word_('~')
+def neg(forth):
+    a = forth._pop()
+    forth._push(~a)
 
-    @code('@')
-    def fetch(self):
-        k = self._pop()
-        v = self.dct[k]
-        self._push(v)
 
-    # return stack
+@word_('<<')
+def shl(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a<<b)
 
-    @code('>r')
-    def tor(self):
-        a = self._pop()
-        self._rpush(a)
+@word_('>>')
+def shr(forth):
+    b = forth._pop()
+    a = forth._pop()
+    forth._push(a>>b)
 
-    @code('r>')
-    def fromr(self):
-        a = self._rpop()
-        self._push(a)
+# Logic
+@word_('and')
+def and_(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a and b)
+    forth._push(v)
 
-    @code()
-    def rdrop(self):
-        self._rpop()
+@word_('or')
+def or_(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a or b)
+    forth._push(v)
 
-    # I/O
+@word_('not')
+def not_(forth):
+    a = forth._pop()
+    v = forth._bool(not a)
+    forth._push(v)
 
-    @code()
-    def key(self):
-        '''Read a char from fin'''
-        c = self.fin.read(1)
-        #c = ord(c)
-        self._push(c)
+# Comparison 
 
-    @code()
-    def word(self):
-        '''Read a word from fin'''
-        w = ''
-        spaces = ' \t\n\f'
+@word_('<=')
+def le(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a <= b)
+    forth._push(v)
 
-        while True:
-            c = self.fin.read(1)
-            if (not c) or (c not in spaces):
-                break
+@word_('<')
+def lt(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a < b)
+    forth._push(v)
 
+@word_('>=')
+def ge(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a >= b)
+    forth._push(v)
+
+@word_('>')
+def gt(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a > b)
+    forth._push(v)
+
+@word_('=')
+def eq(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a == b)
+    forth._push(v)
+
+@word_('<>')
+def ne(forth):
+    b = forth._pop()
+    a = forth._pop()
+    v = forth._bool(a != b)
+    forth._push(v)
+
+# Branch
+
+@word_()
+def branch(forth):
+    v = forth._next()
+    forth._inc_pc(v)
+
+@word_('0branch')
+def zbranch(forth):
+    c = forth._pop()
+    v = forth._next()
+    if not c:
+        forth._inc_pc(v)
+
+# Variable manipulation
+
+@word_('!')
+def store(forth):
+    k = forth._pop()
+    v = forth._pop()
+    forth.dct[k] = v
+
+@word_('@')
+def fetch(forth):
+    k = forth._pop()
+    v = forth.dct[k]
+    forth._push(v)
+
+# return stack
+
+@word_('>r')
+def tor(forth):
+    a = forth._pop()
+    forth._rpush(a)
+
+@word_('r>')
+def fromr(forth):
+    a = forth._rpop()
+    forth._push(a)
+
+@word_()
+def rdrop(forth):
+    return forth._rpop()
+
+@word_()
+def exit(forth):
+    pc = forth._rpop()
+    forth.pc = pc
+
+# I/O
+
+@word_()
+def key(forth):
+    '''Read a char from fin'''
+    c = forth.fin.read(1)
+    #c = ord(c)
+    forth._push(c)
+
+@word_()
+def word(forth):
+    '''Read a word from fin'''
+    spaces = ' \t\n\f'
+
+    while True:
+        c = forth.fin.read(1)
+        if (not c) or (c not in spaces):
+            break
+    w = c
+    while True:
+        c = forth.fin.read(1)
+        if (not c) or (c in spaces):
+            break
         w = w + c
-        while True:
-            c = self.fin.read(1)
-            if (not c) or (c in spaces):
-                break
-            w = w + c
-        self._push(w)
+    forth._push(w)
 
-    @code()
-    def emit(self):
-        '''Write a char to fout'''
-        c = self._pop()
-        if type(c) == int:
-            c = chr(c)
-        self.fout.write(c)
-        if c == '\n':
-            self.fout.flush()
+@word_()
+def emit(forth):
+    '''Write a char to fout'''
+    c = forth._pop()
+    if type(c) == int:
+        c = chr(c)
+    forth.fout.write(c)
+    if c == '\n':
+        forth.fout.flush()
+
+# Interpreter
+
+@word_()
+def lit(forth):
+    a = forth._next()
+    forth._push(a)
+
+@word_('`', imm=True)
+def tick(forth):
+    # Uses a trick reported by jonesforth from buzzard92
+    # this tick only works in compiled code
+    a = forth._next()
+    forth._push(a)
+
+@word_(',', imm=True)
+def comma(forth):
+    v = forth._pop()
+    word = forth.last_word
+    code = word.code
+    code.append(v)
+
+@word_('[', imm=True)
+def lbrac(forth):
+    forth.dct['forth_interpret'] = True
+
+@word_(']', imm=True)
+def rbrac(forth):
+    forth.dct['forth_interpret'] = False
+
+@word_()
+def forth_interpret(forth):
+    v = forth.dct['forth_interpret']
+    v = forth._bool(v)
+    forth._push(v)
+
+@word_()
+def is_immediate(forth):
+    word = forth._pop()
+    v = forth._bool(word.imm)
+    forth._push(v)
+
+@word_()
+def word_from_name(forth):
+    name = forth._pop()
+    v = forth._traduce(name)
+    i = isinstance(v, Word)
+    i = forth._bool(i)
+    forth._push(v)
+    forth._push(i)
+
+@word_()
+def create(forth):
+    name = forth._pop()
+    word = Word(name, [])
+    forth._add_word(word)
+
+@word_()
+def immediate(forth):
+    word = forth.last_word
+    word.imm = True
+
+@word_()
+def exec_(forth):
+    word = forth._pop()
+    forth._exec(word)
 
 
+end  = Word('end', None)
+bye  = Word('bye', [end])
+colon = Word(':', [word, create, rbrac, exit], imm=True)
+semicolon = Word(';', [lit, exit, comma, lbrac, exit], imm=True)
 
-def try_word(f, word, stack):
-    f.stack = stack
-    word = word.split()
-    f._add_word('init', word)
-    f.pc = ['init', 0]
-    f._run()
+interpret = Word('interpret',
+                 [
+                     lbrac,
+                     # ini
+                     word,                          # 0
+                     dup, zbranch, 26,              # 1  --> exit
+                     word_from_name,                # 4
+                     zbranch, 12,                   # 5  --> lit
+                     # is_word
+                     dup, is_immediate,             # 7
+                     forth_interpret,               # 9
+                     or_, zbranch, 3,               # 10 --> wd_compile
+                     # wd_interpret
+                     exec_, branch, -16,            # 13 --> ini
+                     # wd_compile
+                     comma, branch, -19,            # 16 --> ini
+                     # lit
+                     forth_interpret,               # 19
+                     zbranch, 2,                    # 20 --> lit_complie
+                     # lit interpret
+                     branch, -24,                   # 22 --> ini
+                     # lit compile
+                     tick, lit, comma, comma,       # 24
+                     branch, -30,                   # 28 --> ini
+                     # exit
+                     drop, exit                     # 30
+                 ])
 
+init = Word('init', [interpret, exit])
 
 if __name__ == '__main__':
-    from cStringIO import StringIO
-    fin = StringIO(' Hello word')
-    f = Forth(run=False, fin=fin)
-    try_word(f, 'word word  end', [])
-
+    forth = Forth(debug=True)

@@ -11,4 +11,3 @@
 ##############################################################################
 
 from forthvm import Forth
-from interpreter import add_word
