@@ -596,4 +596,4 @@ interpret = Word('interpret',
 init = Word('init', [interpret, exit])
 
 if __name__ == '__main__':
-    forth = Forth(debug=True)
+    forth = Forth(debug=False)
