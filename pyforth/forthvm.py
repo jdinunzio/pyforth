@@ -136,15 +136,7 @@ class Forth:
         self._add_word(word)
         return word
 
-    def _bool(self, b):
-        '''Convert boolean to forth boolean'''
-        return b
-        if b == True:
-            return -1
-        else:
-            return 0
-        
-    # Execution
+   # Execution
 
     def _run(self, word=None):
         '''Start running the virtual machine'''
@@ -358,20 +350,20 @@ def shr(forth):
 def and_(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a and b)
+    v = a and b
     forth._push(v)
 
 @word_('or')
 def or_(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a or b)
+    v = a or b
     forth._push(v)
 
 @word_('not')
 def not_(forth):
     a = forth._pop()
-    v = forth._bool(not a)
+    v = not a
     forth._push(v)
 
 # Comparison 
@@ -380,42 +372,42 @@ def not_(forth):
 def le(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a <= b)
+    v = a <= b
     forth._push(v)
 
 @word_('<')
 def lt(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a < b)
+    v = a < b
     forth._push(v)
 
 @word_('>=')
 def ge(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a >= b)
+    v = a >= b
     forth._push(v)
 
 @word_('>')
 def gt(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a > b)
+    v = a > b
     forth._push(v)
 
 @word_('=')
 def eq(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a == b)
+    v = a == b
     forth._push(v)
 
 @word_('<>')
 def ne(forth):
     b = forth._pop()
     a = forth._pop()
-    v = forth._bool(a != b)
+    v = (a != b)
     forth._push(v)
 
 # Branch
@@ -535,13 +527,12 @@ def rbrac(forth):
 @word_()
 def forth_interpret(forth):
     v = forth.dct['forth_interpret']
-    v = forth._bool(v)
     forth._push(v)
 
 @word_()
 def is_immediate(forth):
     word = forth._pop()
-    v = forth._bool(word.imm)
+    v = word.imm
     forth._push(v)
 
 @word_()
@@ -549,7 +540,6 @@ def word_from_name(forth):
     name = forth._pop()
     v = forth._traduce(name)
     i = isinstance(v, Word)
-    i = forth._bool(i)
     forth._push(v)
     forth._push(i)
 
